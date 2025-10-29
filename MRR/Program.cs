@@ -1,5 +1,7 @@
 
+using System.Text.Json;
 using System.Net.WebSockets;
+using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -11,68 +13,118 @@ var app = builder.Build();
 
 app.UseWebSockets();
 
-
-// Test helper to check if a port is open
-async Task<(bool success, string error)> TestWebSocketConnectionAsync(string ip, int port, string path)
+async Task<(bool success, WebSocket ws, string result, string error)> ConnectSendMessage(string ip, string path, object command)
 {
-    var uri = new Uri($"ws://{ip}:{port}/{path}");
+    var uri = new Uri($"ws://{ip}:80/{path}");
     using var ws = new ClientWebSocket();
-    ws.Options.SetRequestHeader("Origin", "http://localhost");  // Some WS servers require this
-    
+
     try
     {
         // Use a short timeout for faster testing
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
         await ws.ConnectAsync(uri, cts.Token);
-        return (true, "Connected successfully");
+
+        var jsonCommand = JsonSerializer.Serialize(command);
+        var bytes = Encoding.UTF8.GetBytes(jsonCommand);
+
+        await ws.SendAsync(
+            new ArraySegment<byte>(bytes),
+            WebSocketMessageType.Binary,
+            true,
+            CancellationToken.None);
+
+        var buffer = new byte[1024];
+        var resultback = await ws.ReceiveAsync(
+            new ArraySegment<byte>(buffer),
+            CancellationToken.None);
+
+        string result = "blank";
+
+        if (resultback.MessageType == WebSocketMessageType.Binary)
+        {
+            var response = Encoding.UTF8.GetString(buffer, 0, resultback.Count);
+            result = response;
+            Console.WriteLine("Response: " + response);
+        }
+
+
+        return (true, ws, result, "Connected successfully");
     }
     catch (Exception ex)
     {
-        return (false, $"Port {port} failed: {ex.Message}");
+        return (false, ws, "error", $"Connect failed: {ex.Message}");
     }
 }
 
-app.MapGet("/api/testrobot/{ipAddress}", async (string ipAddress) =>
+
+app.MapGet("/api/send/{ipAddress}", async (string ipAddress) =>
 {
-    var results = new List<string>();
-    
-    // Common VEX AIM ports and paths to try
-    var portsToTry = new[] { 80, 8080, 81, 8081 };
-    var pathsToTry = new[] { "", "ws", "aim", "robot" };
-    
-    foreach (var port in portsToTry)
+    var path1 = "ws_status";
+    var path2 = "ws_cmd";
+    var command1 = new
     {
-        foreach (var path in pathsToTry)
-        {
-            var (success, error) = await TestWebSocketConnectionAsync(ipAddress, port, path);
-            if (success)
-            {
-                return Results.Ok($"Success! Found robot at ws://{ipAddress}:{port}/{path}");
-            }
-            results.Add($"Tried ws://{ipAddress}:{port}/{path} - {error}");
-        }
-    }
+        cmd_id = "drive",
+        angle = 0.0,
+        speed = 50.0,
+        stacking_type = 0
+    };
 
-    // Also try a basic TCP connection test to port 80 to see if web server is up
-    using (var tcp = new System.Net.Sockets.TcpClient())
+    var command2 = new
     {
-        try
-        {
-            await tcp.ConnectAsync(ipAddress, 80);
-            results.Add("Note: HTTP port 80 is open - robot web server appears to be running");
-        }
-        catch 
-        {
-            results.Add("Note: HTTP port 80 is closed - robot web server may not be running");
-        }
-    }
+        cmd_id = "drive",
+        command = "LED",
+        color = "#FF0000",
+        angle = 0.0,
+        speed = 50.0,
+        stacking_type = 0
+    };
 
-    return Results.Ok(new { 
-        error = "Could not connect to robot websocket server",
-        details = results
+    var (success, ws, result, error) = await ConnectSendMessage(ipAddress, path1, command1);
+    var (success2, ws2, result2, error2) = await ConnectSendMessage(ipAddress, path2, command2);
+
+
+    return Results.Ok(new
+    {
+//        details = result,details2 = result2, error1 = error, error2 = error2
+        details = result,details2 = result2, error1 = error, error2 = error2
     });
 });
 
+
+app.MapGet("/api/one/{ipAddress?}/{cmd_id_in?}", async (string? ipAddress = "192.168.1.150", string? cmd_id_in = "drive") =>
+{
+    var path = "ws_cmd";
+    //    var path = "ws_status";
+
+    /* commands that almost
+    drive
+    turn
+    drive_for
+    turn_for
+    turn_to
+    */
+
+    var command = new
+    {
+        cmd_id = cmd_id_in,
+        command = "LED",
+        color = "#FF0000",
+        angle = 0.0,
+        speed = 50.0,
+        stacking_type = 0
+    };
+
+    var (success, ws, result, error) = await ConnectSendMessage(ipAddress, path, command);
+    if (success)
+    {
+        return Results.Ok(result);
+    }
+
+    return Results.Ok(new
+    {
+        details = result, error = error
+    });
+});
 
 
 app.Run();
