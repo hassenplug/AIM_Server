@@ -26,7 +26,7 @@ public class AIMRobot // : IAsyncDisposable
         try
         {
             await wsCmd.ConnectAsync(new Uri($"ws://{ipAddress}/ws_cmd"), CancellationToken.None);
-            await wsStatus.ConnectAsync(new Uri($"ws://{ipAddress}/ws_status"), CancellationToken.None);
+            //await wsStatus.ConnectAsync(new Uri($"ws://{ipAddress}/ws_status"), CancellationToken.None);
             //await wsImage.ConnectAsync(new Uri($"ws://{ipAddress}/ws_img"), CancellationToken.None);
 
             isConnected = true;
@@ -37,14 +37,19 @@ public class AIMRobot // : IAsyncDisposable
         }
         catch (Exception ex)
         {
-            throw new Exception($"Failed to connect to AIM robot: {ex.Message}", ex);
+            isConnected = false;
+            //throw new Exception($"Failed to connect to AIM robot: {ex.Message}", ex);
         }
     }
 
     public async Task SendCommandAsync(object command)
     {
         if (!isConnected || wsCmd == null)
-            throw new InvalidOperationException("Not connected to AIM robot");
+        {
+            isConnected = false;
+            return;
+        }
+        //    throw new InvalidOperationException("Not connected to AIM robot");
 
         var jsonCommand = JsonSerializer.Serialize(command);
         var bytes = Encoding.UTF8.GetBytes(jsonCommand);
@@ -154,13 +159,12 @@ public class AIMRobot // : IAsyncDisposable
         });
 
     // LED commands
-    public Task SetLedAsync(int led, int r, int g, int b)
+    public Task SetLedAsync(string led, int r, int g, int b)
     {
         var ledData = new Dictionary<string, object>
         {
             { "cmd_id", "light_set" },
-            { led.ToString(), new { r, g, b } },
-            { "2", new { r, g, b } }
+            { led, new { r, g, b } }
         };
         Console.WriteLine("LED Data: " + JsonSerializer.Serialize(ledData));
         return SendCommandAsync(ledData);
